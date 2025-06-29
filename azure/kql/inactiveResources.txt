@@ -1,0 +1,55 @@
+union 
+    // Inactive Virtual Machines (Deallocated for 30+ Days)
+    resources
+    | where type == "microsoft.compute/virtualmachines"
+    | extend powerState = tostring(properties.extended.instanceView.statuses[0].code)
+    | where powerState == "PowerState/deallocated"
+    | project resourceType=type, name, resourceGroup, subscriptionId, location, status="Deallocated VM",
+
+    // Stopped App Services (Web Apps & Functions) -> THIS WORKS AS EXPECTED
+    resources
+    | where type == "microsoft.web/sites"
+    | where tostring(properties.state) == "Stopped"
+    | project resourceType=type, name, resourceGroup, subscriptionId, location, status="Stopped App Service",
+
+    // Storage Accounts in Cool/Archive Tier (Potentially Low Usage) -> THIS WORKS BUT NEEDS ADDITIONAL TESTING
+    resources
+    | where type == "microsoft.storage/storageaccounts"
+    | extend accessTier = tostring(properties.accessTier)
+    | where accessTier == ""
+    | project resourceType=type, name, resourceGroup, subscriptionId, location, status="Low Activity Storage"
+
+	// Databases that are Offline/Disabled -> THIS IS WORKING AS EXPECTED
+    resources
+    | where type in ("microsoft.sql/servers/databases", "microsoft.dbforpostgresql/servers", "microsoft.dbformysql/servers")
+    | extend dbStatus = tostring(properties.status)
+    | where dbStatus in ("Disabled", "Offline")
+    | project resourceType=type, name, resourceGroup, subscriptionId, location, status="Inactive Database",
+
+    // Unused Public IPs (Not Attached) -> THIS WORKS AS EXPECTED
+    resources
+    | where type == "microsoft.network/publicipaddresses"
+    | where isnull(properties.ipConfiguration)
+    | project resourceType=type, name, resourceGroup, subscriptionId, location, status="Unused Public IP",
+
+    // Load Balancers Without Backend Pools -> THIS WORKS AS EXPECTED
+    resources
+    | where type == "microsoft.network/loadbalancers"
+    | where array_length(properties.backendAddressPools) == 0
+    | project resourceType=type, name, resourceGroup, subscriptionId, location, status="Unused Load Balancer",
+
+    // Unattached Disks -> THIS WORKS AS EXPECTED
+    resources
+    | where type == "microsoft.compute/disks"
+    | extend diskState = tostring(properties.diskState)
+    | where diskState == "Unattached"
+    | project resourceType=type, name, resourceGroup, subscriptionId, location, status="Unattached Disk",
+
+    // Key Vaults Without Access Policies (Likely Unused)
+    resources
+    | where type == "microsoft.keyvault/vaults"
+    | where properties.accessPolicies == '[]'
+    | project resourceType=type, name, resourceGroup, subscriptionId, location, status="Unused Key Vault"
+
+| order by resourceType, subscriptionId, resourceGroup
+

@@ -1,0 +1,8 @@
+// Unique Subscriptions
+//
+// Author: Matthew Sunner, 2025
+resources
+| join kind=leftouter (resourcecontainers | where type == "microsoft.resources/subscriptions" | project subscriptionId, subscriptionName = name) on subscriptionId
+| project subscriptionName, subscriptionId
+| distinct subscriptionId, subscriptionName
+| order by subscriptionName

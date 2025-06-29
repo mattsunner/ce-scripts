@@ -1,0 +1,64 @@
+{
+    "properties": {
+      "displayName": "Audit Resources for Required Tags",
+      "policyType": "Custom",
+      "mode": "Indexed",
+      "description": "Checks that all resources have the required tags: Application, Owner, and Cost Center. If any tag is missing, the resource is marked as non-compliant.",
+      "metadata": {
+        "version": "1.0.0",
+        "category": "Tags"
+      },
+      "parameters": {
+        "requiredTags": {
+          "type": "Array",
+          "metadata": {
+            "displayName": "Required Tags",
+            "description": "List of required tags that must be applied to all resources."
+          },
+          "defaultValue": ["Application", "Owner", "Cost Center", "Environment", "Tier", "BusinessUnit", "DepartmentName", "SupportEmail"]
+        }
+      },
+      "policyRule": {
+        "if": {
+          "anyOf": [
+            {
+              "field": "[concat('tags[', parameters('requiredTags')[0], ']')]",
+              "exists": "false"
+            },
+            {
+              "field": "[concat('tags[', parameters('requiredTags')[1], ']')]",
+              "exists": "false"
+            },
+            {
+              "field": "[concat('tags[', parameters('requiredTags')[2], ']')]",
+              "exists": "false"
+            },
+            {
+              "field": "[concat('tags[', parameters('requiredTags')[3], ']')]",
+              "exists": "false"
+            },
+            {
+              "field": "[concat('tags[', parameters('requiredTags')[4], ']')]",
+              "exists": "false"
+            },
+            {
+              "field": "[concat('tags[', parameters('requiredTags')[5], ']')]",
+              "exists": "false"
+            },
+            {
+              "field": "[concat('tags[', parameters('requiredTags')[6], ']')]",
+              "exists": "false"
+            },
+            {
+              "field": "[concat('tags[', parameters('requiredTags')[7], ']')]",
+              "exists": "false"
+            }
+          ]
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    }
+  }
+  

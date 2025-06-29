@@ -1,0 +1,21 @@
+resources
+| extend 
+    accessTier = tostring(properties.accessTier),
+    dbStatus = tostring(properties.status),
+    diskState = tostring(properties.diskState),
+    ipConfig = properties.ipConfiguration,
+    backendPools = properties.backendAddressPools,
+    kvAccessPolicies = properties.accessPolicies,
+    appServiceState = tostring(properties.state)
+| extend 
+    isStoppedAppService = iff(type == "microsoft.web/sites" and appServiceState == "Stopped", "Stopped App Service", ""),
+    isLowActivityStorage = iff(type == "microsoft.storage/storageaccounts" and accessTier == "", "Low Activity Storage", ""),
+    isInactiveDB = iff(type in ("microsoft.sql/servers/databases", "microsoft.dbforpostgresql/servers", "microsoft.dbformysql/servers") and dbStatus in ("Disabled", "Offline"), "Inactive Database", ""),
+    isUnusedPublicIP = iff(type == "microsoft.network/publicipaddresses" and isnull(ipConfig), "Unused Public IP", ""),
+    isUnusedLB = iff(type == "microsoft.network/loadbalancers" and array_length(backendPools) == 0, "Unused Load Balancer", ""),
+    isUnattachedDisk = iff(type == "microsoft.compute/disks" and diskState == "Unattached", "Unattached Disk", ""),
+    isUnusedKeyVault = iff(type == "microsoft.keyvault/vaults" and array_length(kvAccessPolicies) == 0, "Unused Key Vault", "")
+| project resourceType=type, name, resourceGroup, subscriptionId, location, 
+    status = coalesce(isStoppedAppService, isLowActivityStorage, isInactiveDB, isUnusedPublicIP, isUnusedLB, isUnattachedDisk, isUnusedKeyVault)
+| where isnotempty(status)
+
