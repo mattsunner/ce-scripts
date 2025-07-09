@@ -1,83 +1,109 @@
 <#
-updateTags.ps1 - Azure Tag Update Script (Safe Merge, Tag Contributor Compatible)
+.SYNOPSIS
+  Safely add/merge a single tag to multiple resource groups across subscriptions.
 
-This script reads a CSV file with Azure Subscription IDs and Resource Group names,
-then updates or adds a single tag without overwriting existing ones.
+.PARAMETER inputCsv
+  Path to CSV with SubscriptionId,ResourceGroupName.
 
-Usage:
-.\updateTags.ps1 -inputCsv "path/to/file.csv" -tagKey "TagName" -tagValue "NewValue"
+.PARAMETER tagKey
+  Tag name.
 
-CSV Format:
-SubscriptionId,ResourceGroupName
-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx,ResourceGroup1
-yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy,ResourceGroup2
+.PARAMETER tagValue
+  Tag value.
 
-Author: Matthew Sunner, 2025
+.EXAMPLE
+  .\updateTags.ps1 -inputCsv .\rg-list.csv -tagKey Environment -tagValue Prod -WhatIf
+
 #>
-
+[CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='Medium')]
 Param (
-    [string]$inputCsv,
-    [string]$tagKey,
-    [string]$tagValue
+  [Parameter(Mandatory)][ValidateNotNullOrEmpty()][ValidateScript({ Test-Path $_ })][string]$inputCsv,
+  [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$tagKey,
+  [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$tagValue
 )
 
 Import-Module Az.Resources -ErrorAction Stop
 
-if (-not (Get-AzContext)) {
-    Connect-AzAccount
+# Ensure auth
+try {
+  if (-not (Get-AzContext)) {
+    Connect-AzAccount | Out-Null
+  }
+} catch {
+  Write-Error "Cannot authenticate to Azure: $_"
+  exit 1
 }
 
-if (-not (Test-Path $inputCsv)) {
-    Write-Error "Input CSV file not found: $inputCsv"
-    exit 1
-}
+# Load CSV
+$csv = Import-Csv $inputCsv
+$results = @()
 
-$csvData = Import-Csv -Path $inputCsv
-$totalGroups = $csvData.Count
-$currentGroup = 0
+foreach ($batch in $csv | Group-Object SubscriptionId) {
+  $sub = $batch.Name
+  try {
+    Set-AzContext -SubscriptionId $sub -ErrorAction Stop
+  } catch {
+    Write-Warning "Cannot set context to subscription $($sub): $($_)"
+    continue
+  }
 
-Write-Host "Loaded input file. Processing $totalGroups resource groups..."
-
-foreach ($row in $csvData) {
-    $currentGroup++
-    $subscriptionId = $row.SubscriptionId
-    $resourceGroupName = $row.ResourceGroupName
-
-    Write-Host "`nProcessing group $currentGroup of $totalGroups"
-    Write-Host "Setting context to subscription $subscriptionId"
-    
-    try {
-        Set-AzContext -SubscriptionId $subscriptionId -ErrorAction Stop
-    } catch {
-        Write-Host "Failed to set context for Subscription ID $subscriptionId"
-        Write-Host $_.Exception.Message
-        continue
+  foreach ($row in $batch.Group) {
+    $rg = $row.ResourceGroupName
+    $resId = "/subscriptions/$sub/resourceGroups/$rg"
+    $record = [PSCustomObject]@{
+      Subscription = $sub
+      ResourceGroup = $rg
+      Status    = $null
+      Message   = $null
     }
 
-    $resourceGroupId = "/subscriptions/$subscriptionId/resourceGroups/$resourceGroupName"
-
-    try {
-        # Get existing tags
-        $existingTagData = Get-AzTag -ResourceId $resourceGroupId -ErrorAction SilentlyContinue
-        $tags = $existingTagData?.Properties?.Tags
-
-        if (-not $tags) {
-            $tags = @{}
+    if ($PSCmdlet.ShouldProcess($resId, "Merge tag $tagKey=$tagValue")) {
+      try {
+        # Fetch existing tags from RG
+        $rgObj = Get-AzResourceGroup -Name $rg -ErrorAction Stop
+        $tags  = $null
+        if ($rgObj.Tags) {
+          $tags = $rgObj.Tags.Clone()
+        } else {
+          $tags = @{}
         }
-
         $tags[$tagKey] = $tagValue
 
-        Update-AzTag -ResourceId $resourceGroupId -Tag $tags -Operation Merge
-
-        Write-Host "Successfully updated tag '$tagKey' to '$tagValue' on resource group '$resourceGroupName' in subscription '$subscriptionId'"
-    } catch {
-        if ($_.Exception.Message -like "*AuthorizationFailed*") {
-            Write-Host "Permission denied: You need Tag Contributor role to update tags on resource group $resourceGroupName"
-        } else {
-            Write-Host "Failed to update tags for resource group $resourceGroupName in subscription $subscriptionId"
-            Write-Host $_.Exception.Message
+        # Retry wrapper
+        $maxRetries = 3
+        $success = $false
+        for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+          try {
+            Update-AzTag -ResourceId $resId -Tag $tags -Operation Merge -ErrorAction Stop
+            $success = $true
+            break
+          } catch {
+            if ($attempt -eq $maxRetries) {
+              throw
+            }
+            Start-Sleep -Seconds ([math]::Pow(2, $attempt))
+          }
         }
+
+        if ($success) {
+          $record.Status  = 'Success'
+        } else {
+          $record.Status  = 'Failed'
+          $record.Message = "Unknown error during tag update."
+        }
+      } catch {
+        $record.Status  = 'Failed'
+        $record.Message = $_.Exception.Message
+      }
     }
+
+    $results += $record
+  }
 }
 
-Write-Host "`nTag update operation completed. Processed $currentGroup of $totalGroups resource groups."
+# Summary
+$results | Format-Table -AutoSize
+# Optionally:
+# $results | Export-Csv updated-tags-report.csv -NoType
+
+if ($results | Where-Object { $_.Status -eq 'Failed' }) { exit 1}
